@@ -1,0 +1,16 @@
+{
+  "name": "mongo-shard-router",
+  "version": "0.1.0",
+  "description": "Sharding de MongoDB desde la aplicacion, por hash consistente",
+  "main": "src/index.js",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=12"
+  },
+  "keywords": [
+    "mongodb",
+    "sharding",
+    "consistent-hashing"
+  ]
+}
