@@ -12,5 +12,8 @@
     "mongodb",
     "sharding",
     "consistent-hashing"
-  ]
+  ],
+  "dependencies": {
+    "mongodb": "^3.6.2"
+  }
 }
