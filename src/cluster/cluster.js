@@ -1,5 +1,6 @@
 const validarConfiguracion = require('../configuracion/validar-configuracion');
 const ConfiguracionColeccion = require('../configuracion/configuracion-coleccion');
+const RepositorioDistribuido = require('../repositorios/repositorio-distribuido');
 const RepositorioShard = require('../repositorios/repositorio-shard');
 const Conexiones = require('./conexiones');
 const Topologia = require('./topologia');
@@ -16,6 +17,7 @@ class Cluster {
     this.enrutador = this.topologia.crearEnrutador();
     this.conexiones = new Conexiones();
     this.rebalanceador = new Rebalanceador(this);
+    this.repositorios = new Map();
     this.shardsPorQuitar = [];
     this.rebalanceoPendiente = false;
   }
@@ -28,6 +30,13 @@ class Cluster {
 
   async cerrar() {
     await this.conexiones.desconectarTodos();
+  }
+
+  repositorio(nombreColeccion) {
+    if (!this.repositorios.has(nombreColeccion)) {
+      this.repositorios.set(nombreColeccion, new RepositorioDistribuido(this, nombreColeccion));
+    }
+    return this.repositorios.get(nombreColeccion);
   }
 
   repositorioShard(nombreShard, nombreColeccion) {
