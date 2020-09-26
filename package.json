@@ -10,6 +10,7 @@
   },
   "scripts": {
     "test": "mocha --timeout 30000 \"test/**/*.test.js\"",
+    "distribucion": "node scripts/distribucion.js",
     "ejemplo": "node ejemplos/ejemplo.js"
   },
   "keywords": [
