@@ -4,8 +4,8 @@ class RepositorioReservas extends RepositorioDistribuido {
     super(cluster, 'reservas');
   }
 
-  buscarPorCliente(clienteId) {
-    return this.buscar({ clienteId });
+  buscarPorCliente(clienteId, pais) {
+    return this.buscar({ clienteId, pais });
   }
 
   buscarLasMasCaras(cantidad) {

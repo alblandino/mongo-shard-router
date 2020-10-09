@@ -26,9 +26,9 @@ class RepositorioDistribuido {
     return { insertados: documentos.length, shards };
   }
 
-  // opciones: orden, saltar, limite y campos
+  // opciones: orden, saltar, limite, campos y zona
   async buscar(filtro = {}, opciones = {}) {
-    const shards = this.shardsPara(filtro);
+    const shards = this.shardsPara(filtro, opciones.zona);
 
     if (shards.length === 1) {
       return this.repositorioDe(shards[0]).buscar(filtro, opciones);
@@ -45,36 +45,36 @@ class RepositorioDistribuido {
     return this.buscarUno({ _id: id });
   }
 
-  async contar(filtro = {}) {
-    const cantidades = await this.ejecutarEnShards(filtro, repositorio => repositorio.contar(filtro));
+  async contar(filtro = {}, opciones = {}) {
+    const cantidades = await this.ejecutarEnShards(filtro, opciones.zona, repositorio => repositorio.contar(filtro));
     return sumar(cantidades);
   }
 
   async actualizarUno(filtro, cambios, opciones = {}) {
     validarCambios(cambios, this.configuracion.camposQueDecidenElShard());
 
-    const actualizado = await this.actualizarEnElPrimeroQueCoincida(filtro, cambios);
+    const actualizado = await this.actualizarEnElPrimeroQueCoincida(filtro, cambios, opciones.zona);
     if (actualizado) {
       return actualizado;
     }
     if (opciones.upsert) {
-      return this.insertarConUpsert(filtro, cambios);
+      return this.insertarConUpsert(filtro, cambios, opciones.zona);
     }
     return { encontrados: 0, modificados: 0, shard: null };
   }
 
-  async actualizarVarios(filtro, cambios) {
+  async actualizarVarios(filtro, cambios, opciones = {}) {
     validarCambios(cambios, this.configuracion.camposQueDecidenElShard());
 
-    const resultados = await this.ejecutarEnShards(filtro, repositorio => repositorio.actualizarVarios(filtro, cambios));
+    const resultados = await this.ejecutarEnShards(filtro, opciones.zona, repositorio => repositorio.actualizarVarios(filtro, cambios));
     return {
       encontrados: sumar(resultados.map(resultado => resultado.encontrados)),
       modificados: sumar(resultados.map(resultado => resultado.modificados))
     };
   }
 
-  async eliminarUno(filtro) {
-    for (const shard of this.shardsPara(filtro)) {
+  async eliminarUno(filtro, opciones = {}) {
+    for (const shard of this.shardsPara(filtro, opciones.zona)) {
       const eliminados = await this.repositorioDe(shard).eliminarUno(filtro);
       if (eliminados > 0) {
         return { eliminados, shard };
@@ -83,14 +83,14 @@ class RepositorioDistribuido {
     return { eliminados: 0, shard: null };
   }
 
-  async eliminarVarios(filtro) {
-    const eliminados = await this.ejecutarEnShards(filtro, repositorio => repositorio.eliminarVarios(filtro));
+  async eliminarVarios(filtro, opciones = {}) {
+    const eliminados = await this.ejecutarEnShards(filtro, opciones.zona, repositorio => repositorio.eliminarVarios(filtro));
     return { eliminados: sumar(eliminados) };
   }
 
   // a que shards se manda una consulta con este filtro
-  shardsPara(filtro) {
-    return this.cluster.shardsParaConsulta(this.configuracion, filtro || {});
+  shardsPara(filtro, zona) {
+    return this.cluster.shardsParaConsulta(this.configuracion, filtro || {}, zona);
   }
 
   // a cada shard se le piden saltar + limite documentos porque el corte se hace despues de juntarlos
@@ -103,8 +103,8 @@ class RepositorioDistribuido {
     return combinarResultados(resultados, opciones, this.cluster.estaRebalanceando());
   }
 
-  async actualizarEnElPrimeroQueCoincida(filtro, cambios) {
-    for (const shard of this.shardsPara(filtro)) {
+  async actualizarEnElPrimeroQueCoincida(filtro, cambios, zona) {
+    for (const shard of this.shardsPara(filtro, zona)) {
       const resultado = await this.repositorioDe(shard).actualizarUno(filtro, cambios);
       if (resultado.encontrados > 0) {
         return { encontrados: resultado.encontrados, modificados: resultado.modificados, shard };
@@ -113,16 +113,16 @@ class RepositorioDistribuido {
     return null;
   }
 
-  async insertarConUpsert(filtro, cambios) {
-    const shard = this.shardDestinoDelFiltro(filtro);
+  async insertarConUpsert(filtro, cambios, zona) {
+    const shard = this.shardDestinoDelFiltro(filtro, zona);
     const resultado = await this.repositorioDe(shard).actualizarUno(filtro, cambios, { upsert: true });
     return { encontrados: 0, modificados: 0, idInsertado: resultado.idInsertado, shard };
   }
 
-  shardDestinoDelFiltro(filtro) {
-    const shards = this.cluster.shardsDeFiltro(this.configuracion, filtro);
+  shardDestinoDelFiltro(filtro, zona) {
+    const shards = this.cluster.shardsDeFiltro(this.configuracion, filtro, zona);
     if (shards.length !== 1) {
-      throw new ErrorDeOperacion('Para hacer upsert el filtro tiene que tener la llave del shard');
+      throw new ErrorDeOperacion('Para hacer upsert el filtro tiene que tener la llave del shard (y el pais si la coleccion usa zonas)');
     }
     return shards[0];
   }
@@ -138,8 +138,8 @@ class RepositorioDistribuido {
     return documentosPorShard;
   }
 
-  ejecutarEnShards(filtro, operacion) {
-    const shards = this.shardsPara(filtro);
+  ejecutarEnShards(filtro, zona, operacion) {
+    const shards = this.shardsPara(filtro, zona);
     return Promise.all(shards.map(shard => operacion(this.repositorioDe(shard))));
   }
 

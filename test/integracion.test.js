@@ -2,6 +2,8 @@ const assert = require('assert');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { crearCluster, RepositorioDistribuido, ErrorDeOperacion } = require('../src');
 
+const PAISES = ['DO', 'US', 'MX', 'CL', 'ES', 'FR', 'DE'];
+const PAISES_EUROPA = ['ES', 'FR', 'DE'];
 const TOTAL_PEDIDOS = 2000;
 
 class RepositorioPedidos extends RepositorioDistribuido {
@@ -9,8 +11,8 @@ class RepositorioPedidos extends RepositorioDistribuido {
     super(cluster, 'pedidos');
   }
 
-  buscarPorCliente(clienteId) {
-    return this.buscar({ clienteId });
+  buscarPorCliente(clienteId, pais) {
+    return this.buscar({ clienteId, pais });
   }
 }
 
@@ -25,6 +27,7 @@ function crearPedidos() {
   for (let i = 0; i < TOTAL_PEDIDOS; i++) {
     pedidosInsertados.push({
       clienteId: 'c' + (i % 300),
+      pais: PAISES[i % PAISES.length],
       total: (i * 37) % 1000,
       numero: i
     });
@@ -32,8 +35,8 @@ function crearPedidos() {
   return pedidosInsertados;
 }
 
-function pedidosDelCliente(clienteId) {
-  return pedidosInsertados.filter(pedido => pedido.clienteId === clienteId).length;
+function pedidosDeEuropa() {
+  return pedidosInsertados.filter(pedido => PAISES_EUROPA.includes(pedido.pais)).length;
 }
 
 function enShard(shard, nombreColeccion = 'pedidos') {
@@ -63,12 +66,17 @@ describe('mongo-shard-router', function () {
 
     cluster = await crearCluster({
       shards: [
-        { nombre: 'shard-1', uri: uris[0], baseDatos: 'tienda' },
-        { nombre: 'shard-2', uri: uris[1], baseDatos: 'tienda' },
-        { nombre: 'shard-3', uri: uris[2], baseDatos: 'tienda' }
+        { nombre: 'america-1', uri: uris[0], baseDatos: 'tienda' },
+        { nombre: 'america-2', uri: uris[1], baseDatos: 'tienda' },
+        { nombre: 'europa-1', uri: uris[2], baseDatos: 'tienda' }
       ],
+      zonas: [
+        { nombre: 'america', shards: ['america-1', 'america-2'], paises: ['DO', 'US', 'MX', 'CL'], centro: { lat: 18.48, lng: -69.93 } },
+        { nombre: 'europa', shards: ['europa-1'], paises: PAISES_EUROPA, centro: { lat: 40.41, lng: -3.70 } }
+      ],
+      zonaPorDefecto: 'america',
       colecciones: {
-        pedidos: { llave: 'clienteId' },
+        pedidos: { llave: 'clienteId', geo: { pais: 'pais', ubicacion: 'ubicacion' } },
         usuarios: { llave: 'correo' }
       }
     });
@@ -83,16 +91,34 @@ describe('mongo-shard-router', function () {
     await Promise.all(servidores.map(servidor => servidor.stop()));
   });
 
-  it('cada pedido queda en el shard que le toca', async () => {
+  it('cada pedido queda en su shard y los de europa en europa-1', async () => {
     assert.strictEqual(await revisarUbicacion(pedidos), TOTAL_PEDIDOS);
+    assert.strictEqual(await enShard('europa-1').contar(), pedidosDeEuropa());
+  });
+
+  it('por pais va a la zona y sin pais por coordenadas', async () => {
+    const roma = await pedidos.insertarUno({ clienteId: 'giulia', ubicacion: { type: 'Point', coordinates: [12.49, 41.89] } });
+    assert.strictEqual(roma.shard, 'europa-1');
+
+    const santiago = await pedidos.insertarUno({ clienteId: 'pedro', ubicacion: [-70.66, -33.45] });
+    assert.ok(santiago.shard.startsWith('america'));
+
+    const conPais = await pedidos.insertarUno({ clienteId: 'luis', pais: 'MX', ubicacion: [12.49, 41.89] });
+    assert.ok(conPais.shard.startsWith('america'), 'el pais tiene que mandar sobre las coordenadas');
+
+    for (const clienteId of ['giulia', 'pedro', 'luis']) {
+      await pedidos.eliminarUno({ clienteId });
+    }
   });
 
   it('el repositorio propio busca por cliente en un solo shard', async () => {
-    assert.strictEqual(pedidos.shardsPara({ clienteId: 'c7' }).length, 1);
-    assert.strictEqual(pedidos.shardsPara({ total: 10 }).length, 3);
+    assert.strictEqual(pedidos.shardsPara({ clienteId: 'c7', pais: 'CL' }).length, 1);
+    assert.deepStrictEqual(pedidos.shardsPara({ pais: 'ES' }), ['europa-1']);
+    assert.strictEqual(pedidos.shardsPara({ clienteId: 'c7' }).length, 2);
 
-    const encontrados = await pedidos.buscarPorCliente('c7');
-    assert.strictEqual(encontrados.length, pedidosDelCliente('c7'));
+    const encontrados = await pedidos.buscarPorCliente('c7', 'CL');
+    const esperados = pedidosInsertados.filter(pedido => pedido.clienteId === 'c7' && pedido.pais === 'CL');
+    assert.strictEqual(encontrados.length, esperados.length);
   });
 
   it('buscar en todos los shards con orden, saltar y limite', async () => {
@@ -116,60 +142,63 @@ describe('mongo-shard-router', function () {
 
   it('contar', async () => {
     assert.strictEqual(await pedidos.contar(), TOTAL_PEDIDOS);
-    assert.strictEqual(await pedidos.contar({ clienteId: 'c7' }), pedidosDelCliente('c7'));
+    assert.strictEqual(await pedidos.contar({ pais: 'ES' }), pedidosInsertados.filter(pedido => pedido.pais === 'ES').length);
+    assert.strictEqual(await pedidos.contar({}, { zona: 'europa' }), pedidosDeEuropa());
   });
 
   it('actualizar', async () => {
     const resultado = await pedidos.actualizarVarios({ clienteId: 'c1' }, { $inc: { total: 1 } });
-    assert.strictEqual(resultado.encontrados, pedidosDelCliente('c1'));
+    assert.strictEqual(resultado.encontrados, pedidosInsertados.filter(pedido => pedido.clienteId === 'c1').length);
 
     await assert.rejects(pedidos.actualizarUno({ clienteId: 'c1' }, { $set: { clienteId: 'otro' } }), ErrorDeOperacion);
-    await assert.rejects(pedidos.actualizarUno({ clienteId: 'c1' }, { $set: { 'clienteId.x': 1 } }), /No se puede cambiar/);
+    await assert.rejects(pedidos.actualizarUno({ clienteId: 'c1' }, { $set: { pais: 'ES' } }), /No se puede cambiar/);
     await assert.rejects(pedidos.actualizarUno({ clienteId: 'c1' }, { total: 1 }), /operadores/);
   });
 
   it('upsert', async () => {
     await assert.rejects(pedidos.actualizarUno({ total: 999999 }, { $set: { x: 1 } }, { upsert: true }), /upsert/);
 
-    const resultado = await pedidos.actualizarUno({ clienteId: 'nuevo' }, { $set: { total: 5 } }, { upsert: true });
+    const resultado = await pedidos.actualizarUno({ clienteId: 'nuevo', pais: 'FR' }, { $set: { total: 5 } }, { upsert: true });
     assert.ok(resultado.idInsertado);
-    assert.strictEqual(resultado.shard, cluster.shardDeDocumento(pedidos.configuracion, { clienteId: 'nuevo' }));
+    assert.strictEqual(resultado.shard, 'europa-1');
 
-    const eliminado = await pedidos.eliminarUno({ clienteId: 'nuevo' });
+    const eliminado = await pedidos.eliminarUno({ clienteId: 'nuevo', pais: 'FR' });
     assert.strictEqual(eliminado.eliminados, 1);
   });
 
   it('agregar un shard y rebalancear', async () => {
-    await cluster.agregarShard({ nombre: 'shard-4', uri: uris[0], baseDatos: 'tienda4' });
+    await cluster.agregarShard({ nombre: 'america-3', uri: uris[0], baseDatos: 'tienda3' }, 'america');
     assert.strictEqual(cluster.estaRebalanceando(), true);
-    await assert.rejects(cluster.agregarShard({ nombre: 'shard-5', uri: uris[0] }), /rebalanceo pendiente/);
+    await assert.rejects(cluster.agregarShard({ nombre: 'america-4', uri: uris[0] }), /rebalanceo pendiente/);
 
     // un cliente que ahora le toca al shard nuevo: sus pedidos siguen en el viejo pero se tienen que encontrar
-    const movido = pedidosInsertados.find(pedido => cluster.shardDeDocumento(pedidos.configuracion, pedido) === 'shard-4');
-    assert.strictEqual(await enShard('shard-4').contar({ clienteId: movido.clienteId }), 0);
-    assert.strictEqual((await pedidos.buscarPorCliente(movido.clienteId)).length, pedidosDelCliente(movido.clienteId));
+    const movido = pedidosInsertados.find(pedido => cluster.shardDeDocumento(pedidos.configuracion, pedido) === 'america-3');
+    const esperados = pedidosInsertados.filter(pedido => pedido.clienteId === movido.clienteId && pedido.pais === movido.pais);
+    assert.strictEqual(await enShard('america-3').contar({ clienteId: movido.clienteId }), 0);
+    assert.strictEqual((await pedidos.buscarPorCliente(movido.clienteId, movido.pais)).length, esperados.length);
 
     const movidos = await cluster.rebalancear(100);
     assert.ok(movidos.pedidos > 0);
     assert.strictEqual(cluster.estaRebalanceando(), false);
 
     assert.strictEqual(await revisarUbicacion(pedidos), TOTAL_PEDIDOS);
-    assert.ok(await enShard('shard-4').contar() > 0);
-    assert.strictEqual((await pedidos.buscarPorCliente(movido.clienteId)).length, pedidosDelCliente(movido.clienteId));
+    assert.ok(await enShard('america-3').contar() > 0);
+    assert.strictEqual(await enShard('europa-1').contar(), pedidosDeEuropa());
+    assert.strictEqual((await pedidos.buscarPorCliente(movido.clienteId, movido.pais)).length, esperados.length);
   });
 
   it('quitar un shard', async () => {
-    await cluster.quitarShard('shard-2');
+    await cluster.quitarShard('america-2');
     await cluster.rebalancear();
 
-    assert.ok(!cluster.nombresDeShards().includes('shard-2'));
+    assert.ok(!cluster.nombresDeShards().includes('america-2'));
     assert.strictEqual(await revisarUbicacion(pedidos), TOTAL_PEDIDOS);
     assert.strictEqual(await pedidos.contar(), TOTAL_PEDIDOS);
 
-    await assert.rejects(cluster.quitarShard('shard-2'), /No existe el shard/);
+    await assert.rejects(cluster.quitarShard('europa-1'), /unico shard de la zona/);
   });
 
-  it('otra coleccion se reparte entre todos', async () => {
+  it('coleccion solo por hash se reparte entre todos', async () => {
     const lista = [];
     for (let i = 0; i < 3000; i++) lista.push({ correo: 'usuario' + i + '@correo.com' });
     await usuarios.insertarVarios(lista);

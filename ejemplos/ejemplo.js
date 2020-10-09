@@ -3,22 +3,29 @@ const { crearCluster } = require('../src');
 const RepositorioReservas = require('./repositorio-reservas');
 
 const RESERVAS_DE_EJEMPLO = [
-  { clienteId: 'ana', total: 120 },
-  { clienteId: 'luis', total: 80 },
-  { clienteId: 'marta', total: 200 },
-  { clienteId: 'giulia', total: 50 },
+  { clienteId: 'ana', pais: 'DO', total: 120 },
+  { clienteId: 'luis', pais: 'ES', total: 80 },
+  { clienteId: 'marta', pais: 'CL', total: 200 },
+  // sin pais va por coordenadas
+  { clienteId: 'giulia', ubicacion: { type: 'Point', coordinates: [12.49, 41.89] }, total: 50 },
+  // sin pais ni coordenadas va a la zona por defecto
   { clienteId: 'pedro', total: 10 }
 ];
 
 function crearConfiguracion(uris) {
   return {
     shards: [
-      { nombre: 'shard-1', uri: uris[0], baseDatos: 'app' },
-      { nombre: 'shard-2', uri: uris[1], baseDatos: 'app' },
-      { nombre: 'shard-3', uri: uris[2], baseDatos: 'app' }
+      { nombre: 'america-1', uri: uris[0], baseDatos: 'app' },
+      { nombre: 'america-2', uri: uris[1], baseDatos: 'app' },
+      { nombre: 'europa-1', uri: uris[2], baseDatos: 'app' }
     ],
+    zonas: [
+      { nombre: 'america', shards: ['america-1', 'america-2'], paises: ['DO', 'US', 'MX', 'CL', 'PE'], centro: { lat: 18.48, lng: -69.93 } },
+      { nombre: 'europa', shards: ['europa-1'], paises: ['ES', 'FR', 'DE', 'IT'], centro: { lat: 40.41, lng: -3.70 } }
+    ],
+    zonaPorDefecto: 'america',
     colecciones: {
-      reservas: { llave: 'clienteId' },
+      reservas: { llave: 'clienteId', geo: { pais: 'pais', ubicacion: 'ubicacion' } },
       sesiones: { llave: 'usuarioId' }
     }
   };
@@ -32,8 +39,8 @@ async function mostrarDondeQuedaCadaReserva(reservas) {
 }
 
 function mostrarAQueShardsVanLasConsultas(reservas) {
-  console.log('{ clienteId: "ana" } va a', reservas.shardsPara({ clienteId: 'ana' }));
-  console.log('{ clienteId: { $in: ["ana", "luis"] } } va a', reservas.shardsPara({ clienteId: { $in: ['ana', 'luis'] } }));
+  console.log('{ clienteId: "ana", pais: "DO" } va a', reservas.shardsPara({ clienteId: 'ana', pais: 'DO' }));
+  console.log('{ pais: "ES" } va a', reservas.shardsPara({ pais: 'ES' }));
   console.log('{ total: { $gt: 100 } } va a', reservas.shardsPara({ total: { $gt: 100 } }));
 }
 
@@ -51,8 +58,8 @@ async function ejecutar() {
   console.log('las 3 mas caras:', masCaras.map(r => r.clienteId + ' ' + r.total).join(', '));
 
   console.log();
-  console.log('agregando shard-4...');
-  await cluster.agregarShard({ nombre: 'shard-4', uri: uris[0], baseDatos: 'app4' });
+  console.log('agregando america-3...');
+  await cluster.agregarShard({ nombre: 'america-3', uri: uris[0], baseDatos: 'app3' }, 'america');
   console.log('movidos:', await cluster.rebalancear());
 
   await cluster.cerrar();

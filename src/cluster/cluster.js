@@ -63,25 +63,25 @@ class Cluster {
     return this.enrutador.shardDeDocumento(configuracion, documento);
   }
 
-  shardsDeFiltro(configuracion, filtro) {
-    return this.enrutador.shardsDeFiltro(configuracion, filtro);
+  shardsDeFiltro(configuracion, filtro, zona) {
+    return this.enrutador.shardsDeFiltro(configuracion, filtro, zona);
   }
 
   // con un rebalanceo pendiente un documento puede estar todavia en su shard viejo,
   // por eso se le pregunta a todos
-  shardsParaConsulta(configuracion, filtro) {
+  shardsParaConsulta(configuracion, filtro, zona) {
     if (this.rebalanceoPendiente) {
       return this.conexiones.nombres();
     }
-    return this.shardsDeFiltro(configuracion, filtro);
+    return this.shardsDeFiltro(configuracion, filtro, zona);
   }
 
-  async agregarShard(shard) {
+  async agregarShard(shard, nombreZona) {
     this.validarQueNoHayRebalanceoPendiente();
-    this.topologia.validarQueSePuedeAgregar(shard.nombre);
+    this.topologia.validarQueSePuedeAgregar(shard.nombre, nombreZona);
 
     await this.conexiones.conectar(shard);
-    this.topologia.agregarShard(shard.nombre);
+    this.topologia.agregarShard(shard.nombre, nombreZona);
     this.cambiarEnrutador();
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "mongo-shard-router",
   "version": "0.1.0",
-  "description": "Sharding de MongoDB desde la aplicacion, por hash consistente",
+  "description": "Sharding de MongoDB desde la aplicacion, por hash consistente y/o por geolocalizacion",
   "main": "src/index.js",
   "private": true,
   "license": "MIT",
@@ -16,7 +16,8 @@
   "keywords": [
     "mongodb",
     "sharding",
-    "consistent-hashing"
+    "consistent-hashing",
+    "geolocation"
   ],
   "dependencies": {
     "mongodb": "^3.6.2"
