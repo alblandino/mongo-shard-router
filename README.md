@@ -1,3 +1,5 @@
+![Status](https://img.shields.io/badge/Estado-Archivado-red?style=for-the-badge&logo=git&logoColor=white) ![Mantenimiento](https://img.shields.io/badge/Mantenimiento-Descontinuado-critical?style=for-the-badge)
+
 # mongo-shard-router
 
 Libreria de Node.js para repartir los datos de una aplicacion entre varias bases de datos MongoDB.
